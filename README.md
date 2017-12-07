@@ -238,7 +238,59 @@ app.DisplayMoney(FloatMoneyFactory{}.Amount(100)) // Note that DisplayMoney take
 ```
 Here, `app.DisplayMoney(MySQLMoneyFactory{}.User("johndoe"))` would work just as well, enabling `DisplayMoney(f MoneyFactory)` to be completely agnostic to where the `Money` actually comes from.
 
+#### So what *is* `Money`?
+`Money` is a *Value*, or something that is equatable by its value alone. `User` on the other hand, is an *Entity*, or something which may have its values change in time, but will be equatable by its identity, such as say `User#ID int`. *Values* and *Entities* are the building-blocks of our *Domain* layer.
+
 ### Repositories 
+The business layer for most useful applications requires us to persist state. Since data in the business layer is represented in *Values* and *Entities*, we need an interface between the *Domain* layer and our *Persistence* technology. These are popularly referred to as *Repositories*, and look something like this:
+
+```go
+type UserReposity interface {
+	Save(user User) error
+	FindByID(id int) (User, error)
+}
+
+// InMemoryUserRepository implements UserRepository.
+type InMemoryUserRepository struct {
+	users []User
+}
+
+func NewInMemoryUserRepository() InMemoryUserRepository {
+	return InMemoryUserRepository{make([]user, 0)}
+}
+
+func (r *InMemoryUserRepository) Save(user User) error {
+	for i, u := range r.users {
+		if user.Equals(u) {
+			r.users[i] = user
+			return nil
+		}
+	}
+	
+	r.users = append(r.users, user)
+	return nil
+}
+
+func (r *InMemoryUserRepository) FindByID(id int) (User, error) {
+	for _, ret := range r.users {
+		if ret.id == id {
+			return ret, nil
+		}
+	}
+	
+	return User{}, errors.New("user by that ID doesn't exist")
+}
+```
+
+Business logic now only requires a `UserRepository` and is agnostic to whether that `UserRepository` is actually a `InMemoryUserRepository`, or a `MySQLUserRepository`. This also makes it easier to mock our database for test-cases.
+
+#### A note on ORMs
+ORMs intend on giving us a combination of domain-layer objects that also include persistence-logic for themselves. While they do offer syntactic-sugar and convenience, experienced developers steer clear of ORMs because of the lock-in with one singular ORM due to this *spillover* of persistence into the domain, and the automagic (*eg.* incremented integer IDs, or timestamps) that is often out of the developer's control.
+
+#### Designing a Repository interface
+The methods that are necessitated in a Repository's interface are determined by the *Applications* required in our business layer. For instance, in the aforementioned example, we probably had a `GET /users/<ID>` application/route in a server, that required us to guarantee `UserRepository#FindByID(id int)` in the interface.
+
+Oftentimes, one may find *Applications* requiring a combination of two or more entities, that are illegal if they exist independent of each other. For instance, a `UserProject` allows us to authenticate a `User` for a particular `Project` in our RESTful APIs. These are known as *Aggregate Roots*. Of course, `User` by itself will be an aggregate root for *Applications* that update the User profile. It is the identification of these aggregates that in fact, define our repository interfaces.
 
 ### Specifications
 
