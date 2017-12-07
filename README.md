@@ -293,7 +293,7 @@ The methods that are necessitated in a Repository's interface are determined by 
 Oftentimes, one may find *Applications* requiring a combination of two or more entities, that are illegal if they exist independent of each other. For instance, a `UserProject` allows us to authenticate a `User` for a particular `Project` in our RESTful APIs. These are known as *Aggregate Roots*. Of course, `User` by itself will be an aggregate root for *Applications* that update the User profile. It is the identification of these aggregates that in fact, define our repository interfaces.
 
 ### Specifications
-Repositories successfully separate persistence technology from business rules. However, certain domain-layer rules often become implicit in the implementation of the Repository interface. Take for example, the fact that all `Project` must contain at least one `User` in its `owners` field. This is a domain-level constraint, that is now checked inside the persistence-code of an implementation of the Repository.
+Repositories successfully separate persistence technology from business rules. However, certain domain-layer rules often become implicit in the implementation of the Repository interface. Take for example, the fact that all `Project`s must contain at least one `User` in its `owners` field. This is a domain-level constraint, that is now checked inside the persistence-code of an implementation of the Repository.
 
 Specifications are a pattern to make domain-level relationships explicit, so that changes in the persistence-layer are guaranteed to enforce them.
 
@@ -345,8 +345,68 @@ func (r ProjectRepository) FindByID(id int) (Project, error) {
 With `delegate`, you can inject any underlying persistence technology, and at the same time ensure the integrity of data before returning it to the business layer.
 
 ### Services
+Services are the generalised-case of Repositories, separating the business layer from *any* underlying layers (*ie.* not just the persistence layer). Services are handy when one wants to communicate over network to third-party or another internal services. 
+
+```go
+type SMSService interface {
+	Send(to Phone, body string)
+}
+
+// Can be implemented by TwilioSMSService, PlivoSMSService, etc.
+```
 
 ### Intents/Applications and Dependency Injections
+Once we've built Repositories and Services, all that remains is to tie them together to perform real-world tasks in the business layer. This happens in *Applications*, or as we call them - *Intents*.
+
+```go
+type ViewPostIntent struct {
+	// Dependencies
+	repo PostRepository
+}
+
+func (intent ViewPostIntent) Enact(id int) {
+		if post, err := intent.repo.FindByID(id); err == nil {
+			// Display the post 
+		}
+}
+```
+
+Notice that `PostRepository` is an interface, and can be implemented by any persistence technology - SQL, NoSQL, in-memory, etc. It is said to be *constructor-injected* into *ViewPostIntent* during the latter's construction; as simple as `ViewPostIntent{MySQLPostRepository{}}`. This is the crux of *dependency-injection* - externally inject dependencies instead of constructing them inside the dependent. This way, the dependent's source-code no longer hard-codes the exact implementation:
+
+```go
+type ViewPostIntent struct {
+}
+
+func (intent ViewPostIntent) Enact(id int) {
+	repo := MySQLPostRepository{} // MySQL is hard-coded if not injected - this is a problem! ⚠️
+	// ...
+}
+```
+
+Dependencies in turn often contain their own set of dependencies, and as a result we're left with a graph of dependencies - all stemming out of one single root `struct`. As you can imagine, this graph is extremely painful to construct manually and hence, a dependency-injection *container* or framework, is necessitated. We recommend you start off with simple constructor-injections and move to advanced techniques only when the object-graph becomes unmanageable manually.
 
 ### Composition over Inheritance
+Often, some objects/structures share certain traits and logic. Take for instance `AuthenticateUserIntent` - required in every other intent to authenticate the request. We do this with *composition*.
 
+```go
+type ViewPostIntent {
+	// Mixins
+	AuthenticateUserIntent
+	
+	// Dependencies
+	repo PostRepository
+}
+
+func (intent ViewPostIntent) Enact(secret string, id int) {
+	if err := intent.Auth(secret); err == nil { // Auth(string) is a method of AuthenticateUserIntent
+		// ...
+	}
+}
+```
+
+If we were to do this in Java, we would have naturally gravitated towards inheritance, with `ViewPostIntent inherits AuthenticateUserIntent`. However, bear in mind that one can `inherit` only a single parent. If we were to introduce another handy mixin, the `GoogleAnalyticsIntent`, in all our authenticated Intents, we'd be looking at unnatural inheritances just to fit into the single-parent constraint.
+
+#### Composition versus inheritance
+Multiple inheritence is semantically impossible because each parent can contain its own private state, and how that interacts with other parents is undefined behaviour. In the case of composition, we're essentially embedding the multiple 'parents' within the root and simply aliasing method calls on the root to the parent they belong to. This allows our composition to be stateful.
+
+In the *Swift3* programming language, composition is compulsorily stateless - protocol extensions only define methods, not stored properties. While protocol extensions to allow us extend classes in very interesting ways, the *Golang* composition is a simple treatment to the problem.
