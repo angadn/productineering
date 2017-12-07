@@ -293,6 +293,56 @@ The methods that are necessitated in a Repository's interface are determined by 
 Oftentimes, one may find *Applications* requiring a combination of two or more entities, that are illegal if they exist independent of each other. For instance, a `UserProject` allows us to authenticate a `User` for a particular `Project` in our RESTful APIs. These are known as *Aggregate Roots*. Of course, `User` by itself will be an aggregate root for *Applications* that update the User profile. It is the identification of these aggregates that in fact, define our repository interfaces.
 
 ### Specifications
+Repositories successfully separate persistence technology from business rules. However, certain domain-layer rules often become implicit in the implementation of the Repository interface. Take for example, the fact that all `Project` must contain at least one `User` in its `owners` field. This is a domain-level constraint, that is now checked inside the persistence-code of an implementation of the Repository.
+
+Specifications are a pattern to make domain-level relationships explicit, so that changes in the persistence-layer are guaranteed to enforce them.
+
+```go
+type ProjectOwnershipSpecification struct {
+}
+
+func (s ProjectOwnershipSpecification) Ensure(project Project) error {
+	if len(project.owners) > 0 {
+		return errors.New("project must contain at least one owner")
+	}
+	
+	return nil
+}
+
+type ProjectRepository struct {
+	delegate IProjectRepository
+	ownership ProjectOwnershipSpecification
+}
+
+type IProjectRepository interface {
+	Save(project Project) error
+	FindByID(id int) (Project, error)
+}
+
+func (r ProjectRepository) Save(project Project) error {
+	if err := r.ownership.Ensure(project); err != nil {
+		return err
+	}
+	
+	return r.delegate.Save(r)
+}
+
+func (r ProjectRepository) FindByID(id int) (Project, error) {
+	var (
+		ret Project
+		err error
+	)
+	
+	if ret, err = r.delegate.FindByID(id); err != nil {
+		return ret, err
+	}
+	
+	err = r.ownership.Ensure(ret)
+	return ret, err
+}
+```
+
+With `delegate`, you can inject any underlying persistence technology, and at the same time ensure the integrity of data before returning it to the business layer.
 
 ### Services
 
